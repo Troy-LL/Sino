@@ -4,12 +4,14 @@ Wire shapes live in docs/sino/architecture.md. Gaps are marked there.
 """
 
 import asyncio
+import hmac
 import json
 import mimetypes
 import os
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 import uuid
 from contextlib import asynccontextmanager
@@ -729,7 +731,143 @@ async def lifespan(_app):
         await shutdown_sessions()
 
 
+LOOPBACK_HOSTS = {
+    "127.0.0.1",
+    "localhost",
+    "::1",
+    "0:0:0:0:0:0:0:1",
+    "::ffff:127.0.0.1",
+}
+
+AUTH_PATHS = (
+    "/health",
+    "/questions",
+    "/log",
+    "/family",
+    "/safety-words",
+    "/listen",
+    "/urgent-reply",
+    "/clips",
+    "/face",
+    "/ws",
+)
+
+
+def is_loopback_host(host):
+    if not isinstance(host, str):
+        return False
+    name = host.strip().lower()
+    if name in LOOPBACK_HOSTS:
+        return True
+    if name.startswith("127."):
+        return True
+    if name.startswith("::ffff:127."):
+        return True
+    return False
+
+
+def bind_host():
+    raw = os.environ.get("HOST")
+    if raw is None or not raw.strip():
+        return "127.0.0.1"
+    return raw.strip()
+
+
+def hub_token():
+    return os.environ.get("SINO_TOKEN", "").strip()
+
+
+def allow_open():
+    return os.environ.get("ALLOW_OPEN", "") == "1"
+
+
+def allow_cleartext():
+    return os.environ.get("ALLOW_CLEARTEXT", "") == "1"
+
+
+def validate_bind():
+    # Localhost stays open so tests and a laptop-only run need no token or cert.
+    # A LAN or public bind fails closed: pairing token plus TLS, unless explicitly opted out.
+    host = bind_host()
+    if is_loopback_host(host):
+        return host
+    if not hub_token() and not allow_open():
+        raise SystemExit("LAN bind requires SINO_TOKEN (or ALLOW_OPEN=1 for a public demo)")
+    cert = os.environ.get("CERT", "")
+    key = os.environ.get("KEY", "")
+    if (not cert or not key) and not allow_cleartext():
+        raise SystemExit("LAN bind requires CERT and KEY (or ALLOW_CLEARTEXT=1)")
+    return host
+
+
+def auth_needed_for_path(path):
+    if not isinstance(path, str):
+        return False
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in AUTH_PATHS)
+
+
+def _request_token(headers, query):
+    auth = ""
+    if headers is not None:
+        auth = headers.get("authorization") or headers.get("Authorization") or ""
+    if isinstance(auth, str) and auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    header = ""
+    if headers is not None:
+        header = headers.get("x-sino-token") or headers.get("X-Sino-Token") or ""
+    if isinstance(header, str) and header.strip():
+        return header.strip()
+    token = ""
+    if query is not None:
+        token = query.get("token", "")
+        if isinstance(token, list) and token:
+            token = token[0]
+    if isinstance(token, str):
+        return token.strip()
+    return ""
+
+
+def token_ok(headers, query, client_host):
+    expected = hub_token()
+    if not expected:
+        return True
+    if is_loopback_host(client_host or ""):
+        return True
+    got = _request_token(headers, query)
+    return bool(got) and hmac.compare_digest(got, expected)
+
+
+def _client_host(scope):
+    client = scope.get("client") if isinstance(scope, dict) else None
+    if isinstance(client, (tuple, list)) and client:
+        return client[0]
+    return ""
+
+
+class TokenAuthMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        if not auth_needed_for_path(path):
+            await self.app(scope, receive, send)
+            return
+        headers = {k.decode("latin1"): v.decode("latin1") for k, v in scope.get("headers") or []}
+        raw_query = scope.get("query_string") or b""
+        query = dict(urllib.parse.parse_qsl(raw_query.decode("latin1"), keep_blank_values=True))
+        if token_ok(headers, query, _client_host(scope)):
+            await self.app(scope, receive, send)
+            return
+        response = JSONResponse({"error": "unauthorized"}, status_code=401)
+        await response(scope, receive, send)
+
+
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(TokenAuthMiddleware)
 # Recorded replies and photos. StaticFiles refuses paths that leave this folder.
 # Some Python builds have no .m4a mimetype; without it /media would not send an audio type.
 mimetypes.add_type("audio/mp4", ".m4a")
@@ -961,6 +1099,11 @@ async def listen_audio(request: Request):
 @app.websocket("/ws")
 async def socket(websocket: WebSocket):
     screen = websocket.query_params.get("screen", "")
+    client = websocket.client.host if websocket.client is not None else ""
+    if not token_ok(websocket.headers, websocket.query_params, client):
+        await websocket.accept()
+        await websocket.close(code=1008)
+        return
     if screen not in SCREENS:
         await websocket.accept()
         await websocket.close(code=1008)
@@ -1273,7 +1416,7 @@ def main():
         enable_chime()
         # Always-listening: only the hub process, and only with ALWAYS_LISTEN=1 (off by default).
         enable_always()
-    host = os.environ.get("HOST", "0.0.0.0")
+    host = validate_bind()
     port = int(os.environ.get("PORT", str(DEFAULT_PORT)))
     uvicorn.run(app, host=host, port=port, log_level="info", **_ssl_kwargs())
 

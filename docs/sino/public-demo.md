@@ -43,7 +43,7 @@ shared-cpu-1x, 1024 MB RAM, one machine left running (`min_machines_running = 1`
 
 ## What the URL serves
 
-The process is `python brain/server.py` from `/app` (the repo root). `main()` binds `0.0.0.0` and `PORT` (default 8000). The image sets `SINO_MODE=demo`, `SINO_MODEL=stub`, `CHIME=0`, and `ALWAYS_LISTEN=0`.
+The process is `python brain/server.py` from `/app` (the repo root). `main()` defaults to `127.0.0.1` and `PORT` 8000. The image sets `HOST=0.0.0.0`, `ALLOW_OPEN=1`, and `ALLOW_CLEARTEXT=1` so the public demo can bind on Fly, where TLS already terminates at the edge, plus `SINO_MODE=demo`, `SINO_MODEL=stub`, `CHIME=0`, and `ALWAYS_LISTEN=0`.
 
 | Path | What it is |
 |---|---|

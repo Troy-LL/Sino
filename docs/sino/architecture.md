@@ -151,7 +151,7 @@ TODO: contract gap — family wall members the caregiver adds. Additive. Speaker
 - `DELETE /family/{id}` removes that member and its own photo file. Unknown id is 404. Bad id is 400.
 - `family_added`: `{"event":"family_added","id":"","name":"","color":"","photo":""}` goes to every open screen when a member is saved. `family_removed`: `{"event":"family_removed","id":""}` when one is removed. The caregiver wall loads `GET /family` on connect, and uses `by_person.<id>.photo` for Joy, Troy, and Donita when the added member has no photo of their own.
 
-TODO: contract gap — the interfaces do not name a listen port. `PORT` defaults to 8000. `HOST` defaults to `0.0.0.0`.
+TODO: contract gap — the interfaces do not name a listen port. `PORT` defaults to 8000. `HOST` defaults to `127.0.0.1`. A non-loopback bind requires `SINO_TOKEN` and `CERT`/`KEY`, unless `ALLOW_OPEN=1` or `ALLOW_CLEARTEXT=1` is set. Non-loopback clients must send that token as `Authorization: Bearer`, `X-Sino-Token`, or `?token=`.
 
 TODO: contract gap — `/ws` does not say which socket is `/lola`, `/caregiver`, or `/backstage`. Additive query `screen` is one of `lola`, `caregiver`, `backstage`. A caregiver socket may also send `monitor=1`. That socket also receives `heard`, `face_seen`, and silent `decided`. A plain caregiver socket stays quiet on those. `clip_scan` stays on backstage only.
 
@@ -220,7 +220,7 @@ SINO_MODEL=stub .venv/bin/python brain/tests/test_urgent_reply.py
 Hub (M1, Ollama, mkcert `wss://`):
 
 ```bash
-HOST=0.0.0.0 PORT=8000 SINO_MODEL=ollama HUB_URL=http://127.0.0.1:11434 CERT=/absolute/path/cert.pem KEY=/absolute/path/key.pem python3 brain/server.py
+HOST=0.0.0.0 PORT=8000 SINO_TOKEN=replace-me SINO_MODEL=ollama HUB_URL=http://127.0.0.1:11434 CERT=/absolute/path/cert.pem KEY=/absolute/path/key.pem python3 brain/server.py
 ```
 
 **One command (D6): `hub/start.sh`.** Run it from the repo on the hub. Anyone on the team can.

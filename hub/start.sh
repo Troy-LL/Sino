@@ -20,6 +20,8 @@ VAD_PAD_MS="${VAD_PAD_MS:-200}"   # audio kept around speech; Whisper's default 
 CERT="${CERT:-$HOME/sino/certs/hub.pem}"
 KEY="${KEY:-$HOME/sino/certs/hub-key.pem}"
 PORT="${PORT:-8000}"
+TOKEN_FILE="${TOKEN_FILE:-}"
+SINO_TOKEN="${SINO_TOKEN:-}"
 ALWAYS_LISTEN="${ALWAYS_LISTEN:-0}"   # 1 = the hub mic listens all the time (hub/always.py)
 CHIME="${CHIME:-0}"   # 1 = the laptop also plays the urgent chime (hub/chime.py); urgent rings on the caregiver iPhone
 RUN_DIR="${RUN_DIR:-$HOME/sino/run}"    # PID files of what this script started
@@ -55,6 +57,26 @@ setup_tls() {
   else
     TLS=(-k)
     say "Note: mkcert not found, so the hub's certificate is not checked (curl -k)."
+  fi
+}
+
+# Pairing token for a LAN bind. Reuse the file so phones keep the same secret across restarts.
+setup_token() {
+  if [ -z "$TOKEN_FILE" ]; then
+    TOKEN_FILE="$RUN_DIR/token"
+  fi
+  if [ -z "$SINO_TOKEN" ] && [ -f "$TOKEN_FILE" ]; then
+    SINO_TOKEN="$(cat "$TOKEN_FILE")"
+  fi
+  if [ -z "$SINO_TOKEN" ]; then
+    mkdir -p "$(dirname "$TOKEN_FILE")" || exit 1
+    SINO_TOKEN="$(openssl rand -hex 16)"
+    printf '%s\n' "$SINO_TOKEN" >"$TOKEN_FILE"
+    chmod 600 "$TOKEN_FILE"
+  elif [ ! -f "$TOKEN_FILE" ]; then
+    mkdir -p "$(dirname "$TOKEN_FILE")" || exit 1
+    printf '%s\n' "$SINO_TOKEN" >"$TOKEN_FILE"
+    chmod 600 "$TOKEN_FILE"
   fi
 }
 
@@ -126,6 +148,7 @@ do_start() {
   mkdir -p "$RUN_DIR" "$LOG_DIR" || exit 1
   RUN_DIR="$(cd "$RUN_DIR" && pwd)"
   LOG_DIR="$(cd "$LOG_DIR" && pwd)"
+  setup_token
   say "Starting the Sino hub (parts that already answer are left alone)"
 
   # 1. Ollama, the AI model runtime. It listens on 127.0.0.1 only.
@@ -164,7 +187,7 @@ do_start() {
   elif [ ! -f "$CERT" ] || [ ! -f "$KEY" ]; then
     fail "Hub server" "certificate missing ($CERT, $KEY)"
   else
-    (cd "$ROOT" && launch server env HOST=0.0.0.0 PORT="$PORT" SINO_MODEL=ollama \
+    (cd "$ROOT" && launch server env HOST=0.0.0.0 PORT="$PORT" SINO_TOKEN="$SINO_TOKEN" SINO_MODEL=ollama \
       ALWAYS_LISTEN="$ALWAYS_LISTEN" CHIME="$CHIME" HUB_URL="$OLLAMA_URL" CERT="$CERT" KEY="$KEY" "$PY" brain/server.py)
   fi
 
@@ -215,6 +238,8 @@ direct() {  # direct CHECK LABEL
 
 do_status() {
   local mode ip sans pid down=0
+  mkdir -p "$RUN_DIR" 2>/dev/null || true
+  setup_token
   HEALTH="$(curl -s -m 5 "${TLS[@]}" "$HUB/health")"
   say "Sino hub health light:"
   if [ -n "$HEALTH" ]; then
@@ -260,6 +285,9 @@ do_status() {
     say "Hub URL: unknown, en0 has no IP (is the hub on the hotspot Wi-Fi?)"
   else
     say "Hub URL for the iPad and phone: https://$ip:$PORT"
+    if [ -n "$SINO_TOKEN" ]; then
+      say "LAN token: $SINO_TOKEN (phones send ?token=$SINO_TOKEN or X-Sino-Token)"
+    fi
     # Phones refuse the hub if its certificate does not name this IP.
     sans="$(openssl x509 -noout -text -in "$CERT" 2>/dev/null | grep 'IP Address:')"
     case "$sans," in
