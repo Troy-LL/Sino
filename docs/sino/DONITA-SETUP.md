@@ -112,7 +112,7 @@ ping -c 3 <ipad-ip>            # must work
 ```
 Third check: with the firewall still on, reload `https://<hub-ip>:<port>` on the iPad. It must load. Ping alone does not catch the reply bug above. Keep the iPad awake: with its screen locked it may not answer ping.
 
-9. `mkcert <hub-ip> localhost`, point the server at the two files it makes, and install + trust `rootCA.pem` on the iPad and iPhone (Settings → General → About → Certificate Trust Settings). If the hub IP changes, regenerate.
+9. `mkcert <hub-ip> localhost`, point the server at the two files it makes, and install + trust `rootCA.pem` on the iPad and iPhone (Settings → General → About → Certificate Trust Settings). If the hub IP changes, regenerate. The hub now refuses a LAN bind without `SINO_TOKEN` (and without those cert files). `hub/start.sh` writes a token under `$HOME/sino/run/token` and prints it; phones must send it as `?token=` or `X-Sino-Token` on `/ws` and the API.
 10. Keep the iPhone on the Personal Hotspot screen so it doesn't sleep and drop the network.
 
 Tested Sat 2:00 AM on Donita's iPhone hotspot (hub `172.20.10.2`): passed for the iPad. The iPhone (caregiver phone) is not tested yet.
